@@ -1,11 +1,18 @@
-import { rgbToXy, hexToRgb, rgbToHex, xyToHex, sampleFrame } from './color.js';
+import { rgbToXy, hexToRgb, rgbToHex, xyToHex, sampleFrame, regionWeights } from './color.js';
 
 const $ = (id) => document.getElementById(id);
 const FOLLOW_KEY = 'hue-vision:follow';
+const PLACEMENT_KEY = 'hue-vision:placement';
 
 const state = {
     lights: [],
-    following: new Set(loadFollowing()),
+    following: new Set(loadJson(FOLLOW_KEY, [])),
+    /** light id -> { x, y } relative to the screen (0..1 = on the screen, outside = beside it). */
+    placement: loadJson(PLACEMENT_KEY, {}),
+    /** light id -> pin dot on the placement map. */
+    dots: new Map(),
+    /** light id -> colour the light is showing while "What you see" runs. */
+    liveHex: new Map(),
     vision: null,
 };
 
@@ -212,12 +219,119 @@ function renderLights() {
 
         follow.onchange = () => {
             follow.checked ? state.following.add(light.id) : state.following.delete(light.id);
-            localStorage.setItem(FOLLOW_KEY, JSON.stringify([...state.following]));
+            saveJson(FOLLOW_KEY, [...state.following]);
+            renderPlacement();
         };
 
         light.bulbElement = bulb;
         container.append(card);
     }
+
+    renderPlacement();
+}
+
+/* ---------------- Placement ----------------
+ * The map is the screen with a margin around it. Followed lights are pins: drop one
+ * beside the screen and it follows that part of the picture; pins left in the tray
+ * follow the whole screen.
+ */
+
+/** Where the screen sits inside the map, as a fraction of the map on each side (matches `.screen { inset }`). */
+const SCREEN_INSET = 0.16;
+const SCREEN_SIZE = 1 - 2 * SCREEN_INSET;
+
+function renderPlacement() {
+    const stageLights = $('stage-lights');
+    const tray = $('tray');
+    stageLights.innerHTML = '';
+    tray.innerHTML = '';
+    state.dots.clear();
+
+    const followed = state.lights.filter((l) => state.following.has(l.id));
+    if (followed.length === 0) {
+        tray.innerHTML = '<span class="muted">Tick “Follow screen” on a light to place it here.</span>';
+    }
+
+    for (const light of followed) {
+        const position = state.placement[light.id];
+        const pin = document.createElement('div');
+        pin.className = 'pin';
+        pin.innerHTML = '<div class="dot"></div><div class="pin-label"></div>';
+        pin.querySelector('.pin-label').textContent = light.name;
+        pin.title = position
+            ? `${light.name}: follows the nearest part of the screen. Drag back to the tray to follow the whole screen.`
+            : `${light.name}: follows the whole screen. Drag it onto the map to place it.`;
+
+        const dot = pin.querySelector('.dot');
+        dot.style.color = state.liveHex.get(light.id) ?? lightHex(light);
+        state.dots.set(light.id, dot);
+        pin.onpointerdown = (event) => dragPin(event, pin, light);
+
+        if (position) {
+            pin.style.left = `${(SCREEN_INSET + position.x * SCREEN_SIZE) * 100}%`;
+            pin.style.top = `${(SCREEN_INSET + position.y * SCREEN_SIZE) * 100}%`;
+            stageLights.append(pin);
+        } else {
+            tray.append(pin);
+        }
+    }
+}
+
+function dragPin(event, pin, light) {
+    if (event.button !== 0) {
+        return;
+    }
+    event.preventDefault();
+
+    // Keep the dot where it was grabbed instead of snapping its centre to the pointer.
+    const dotRect = pin.querySelector('.dot').getBoundingClientRect();
+    const offsetX = event.clientX - (dotRect.left + dotRect.width / 2);
+    const offsetY = event.clientY - (dotRect.top + dotRect.height / 2);
+    const move = (e) => {
+        pin.style.left = `${e.clientX - offsetX}px`;
+        pin.style.top = `${e.clientY - offsetY}px`;
+    };
+
+    pin.setPointerCapture(event.pointerId);
+    pin.classList.add('dragging');
+    move(event);
+    pin.onpointermove = move;
+
+    pin.onpointerup = pin.onpointercancel = (e) => {
+        pin.onpointermove = pin.onpointerup = pin.onpointercancel = null;
+
+        if (e.type === 'pointerup') {
+            const x = e.clientX - offsetX;
+            const y = e.clientY - offsetY;
+            const stage = $('stage').getBoundingClientRect();
+            const onStage = x >= stage.left && x <= stage.right && y >= stage.top && y <= stage.bottom;
+
+            if (onStage) {
+                state.placement[light.id] = {
+                    x: round3(((x - stage.left) / stage.width - SCREEN_INSET) / SCREEN_SIZE),
+                    y: round3(((y - stage.top) / stage.height - SCREEN_INSET) / SCREEN_SIZE),
+                };
+            } else {
+                delete state.placement[light.id];
+            }
+            saveJson(PLACEMENT_KEY, state.placement);
+            weightCache.clear();
+        }
+
+        renderPlacement();
+    };
+}
+
+/** Sampling weights per placement, rebuilt only when a light is moved. */
+const weightCache = new Map();
+
+function weightsFor(id) {
+    const position = state.placement[id];
+    const key = position ? `${position.x},${position.y}` : 'screen';
+    if (!weightCache.has(key)) {
+        weightCache.set(key, regionWeights(position, SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    }
+    return [key, weightCache.get(key)];
 }
 
 async function setLight(id, body) {
@@ -289,7 +403,8 @@ async function startVision() {
 
     await Promise.all(targets.filter((l) => !l.on).map((l) => setLight(l.id, { on: true })));
 
-    let smoothed = null;
+    /** Smoothed sample per light id, plus 'screen' for the whole-screen swatch. */
+    const smoothed = new Map();
     let sending = false;
 
     ticker.onmessage = async () => {
@@ -299,34 +414,58 @@ async function startVision() {
 
         context.drawImage(video, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
         const { data } = context.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
-        const sample = sampleFrame(data, $('mode').value);
-
+        const mode = $('mode').value;
         const keep = Number($('smooth').value);
-        smoothed = smoothed
-            ? { rgb: smoothed.rgb.map((c, i) => c * keep + sample.rgb[i] * (1 - keep)), brightness: smoothed.brightness * keep + sample.brightness * (1 - keep) }
-            : sample;
-
         const minBri = Number($('minbri').value);
-        const bri = Math.round(Math.min(254, Math.max(minBri, minBri + (254 - minBri) * smoothed.brightness * Number($('boost').value))));
-        const xy = rgbToXy(...smoothed.rgb);
-        const hex = rgbToHex(smoothed.rgb);
+        const boost = Number($('boost').value);
 
-        $('swatch').style.background = hex;
-        $('swatch').style.color = hex;
-        document.documentElement.style.setProperty('--glow', hex);
-        targets.forEach((l) => l.bulbElement && (l.bulbElement.style.color = hex));
+        // Lights placed at the same spot (or all unplaced lights) share one sample.
+        const samples = new Map();
+        const sampleArea = (key, weights) => {
+            if (!samples.has(key)) {
+                samples.set(key, sampleFrame(data, mode, weights));
+            }
+            return samples.get(key);
+        };
+        const smooth = (id, sample) => {
+            const previous = smoothed.get(id);
+            const next = previous
+                ? { rgb: previous.rgb.map((c, i) => c * keep + sample.rgb[i] * (1 - keep)), brightness: previous.brightness * keep + sample.brightness * (1 - keep) }
+                : sample;
+            smoothed.set(id, next);
+            return next;
+        };
+
+        const screenHex = rgbToHex(smooth('screen', sampleArea('screen', null)).rgb);
+        $('swatch').style.background = screenHex;
+        $('swatch').style.color = screenHex;
+        document.documentElement.style.setProperty('--glow', screenHex);
+
+        const payload = {};
+        for (const light of targets) {
+            const sample = smooth(light.id, sampleArea(...weightsFor(light.id)));
+            const bri = Math.round(Math.min(254, Math.max(minBri, minBri + (254 - minBri) * sample.brightness * boost)));
+            const hex = rgbToHex(sample.rgb);
+
+            state.liveHex.set(light.id, hex);
+            if (light.bulbElement) light.bulbElement.style.color = hex;
+            const dot = state.dots.get(light.id);
+            if (dot) dot.style.color = hex;
+
+            payload[light.id] = light.supportsColor ? { xy: rgbToXy(...sample.rgb), bri } : { bri };
+        }
 
         if (sending) {
             return;
         }
         sending = true;
-        const payload = Object.fromEntries(targets.map((l) => [l.id, l.supportsColor ? { xy, bri } : { bri }]));
         await api('POST', '/api/ambient', { targets: payload, transitiontime: 2 }).catch(() => {});
         sending = false;
     };
 
     stream.getVideoTracks()[0].addEventListener('ended', stopVision);
     state.vision = { stream, ticker, snapshot };
+    $('stage').classList.add('live');
 
     $('vision-start').classList.add('hidden');
     $('vision-stop').classList.remove('hidden');
@@ -343,6 +482,8 @@ async function stopVision() {
     vision.ticker.terminate();
     vision.stream.getTracks().forEach((t) => t.stop());
     $('preview').srcObject = null;
+    $('stage').classList.remove('live');
+    state.liveHex.clear();
     $('vision-start').classList.remove('hidden');
     $('vision-stop').classList.add('hidden');
     document.documentElement.style.removeProperty('--glow');
@@ -380,12 +521,25 @@ function throttle(fn, ms) {
     };
 }
 
-function loadFollowing() {
+function loadJson(key, fallback) {
     try {
-        return JSON.parse(localStorage.getItem(FOLLOW_KEY)) ?? [];
+        const value = JSON.parse(localStorage.getItem(key));
+        return value !== null && typeof value === typeof fallback && Array.isArray(value) === Array.isArray(fallback) ? value : fallback;
     } catch {
-        return [];
+        return fallback;
     }
+}
+
+function saveJson(key, value) {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        // Storage blocked (private mode etc.) - settings just won't survive a reload.
+    }
+}
+
+function round3(n) {
+    return Math.round(n * 1000) / 1000;
 }
 
 refreshStatus().catch((error) => setStatus(error.message, 'bad'));

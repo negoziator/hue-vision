@@ -1,6 +1,40 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rgbToXy, sampleFrame, hexToRgb, rgbToHex } from '../public/color.js';
+import { rgbToXy, sampleFrame, hexToRgb, rgbToHex, regionWeights } from '../public/color.js';
+
+/** A width×height frame: red on the left half, blue on the right half. */
+function splitFrame(width, height) {
+    const pixels = [];
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            pixels.push(...(x < width / 2 ? [220, 20, 20, 255] : [20, 20, 220, 255]));
+        }
+    }
+    return new Uint8ClampedArray(pixels);
+}
+
+test('a light left of the screen follows the left side, one on the right the right side', () => {
+    const frame = splitFrame(16, 9);
+    const left = sampleFrame(frame, 'average', regionWeights({ x: -0.1, y: 0.5 }, 16, 9));
+    const right = sampleFrame(frame, 'average', regionWeights({ x: 1.1, y: 0.5 }, 16, 9));
+
+    assert.ok(left.rgb[0] > left.rgb[2] * 2, `left ${left.rgb}`);
+    assert.ok(right.rgb[2] > right.rgb[0] * 2, `right ${right.rgb}`);
+});
+
+test('lights further from the screen blend a wider area', () => {
+    const frame = splitFrame(16, 9);
+    const near = sampleFrame(frame, 'average', regionWeights({ x: -0.02, y: 0.5 }, 16, 9));
+    const far = sampleFrame(frame, 'average', regionWeights({ x: -0.25, y: 0.5 }, 16, 9));
+
+    assert.ok(far.rgb[2] > near.rgb[2], `near ${near.rgb} far ${far.rgb}`);
+});
+
+test('an unplaced light samples the whole screen', () => {
+    const frame = splitFrame(16, 9);
+    assert.equal(regionWeights(null, 16, 9), null);
+    assert.deepEqual(sampleFrame(frame, 'average', null).rgb, [120, 20, 120]);
+});
 
 test('primaries land in the right corners of the CIE diagram', () => {
     const [rx, ry] = rgbToXy(255, 0, 0);

@@ -56,7 +56,19 @@
         label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
         .vision { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; }
         @media (max-width: 760px) { .vision { grid-template-columns: 1fr; } }
-        video { width: 100%; border-radius: 10px; background: #000; aspect-ratio: 16 / 9; object-fit: contain; border: 1px solid var(--line); }
+        .stage { position: relative; aspect-ratio: 16 / 9; border: 1px dashed var(--line); border-radius: 12px; background: #0f1218; touch-action: none; }
+        /* inset must match SCREEN_INSET in app.js */
+        .screen { position: absolute; inset: 16%; border-radius: 8px; background: #000; border: 1px solid var(--line); box-shadow: 0 0 60px -18px var(--glow); }
+        .screen video { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 8px; }
+        .screen-label { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
+        .stage.live .screen-label { display: none; }
+        .tray { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; min-height: 64px; margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 12px; font-size: 13px; }
+        .pin { display: flex; flex-direction: column; align-items: center; gap: 4px; width: max-content; cursor: grab; touch-action: none; user-select: none; }
+        .pin .dot { width: 28px; height: 28px; border-radius: 50%; background: currentColor; border: 2px solid rgba(255, 255, 255, 0.85); box-shadow: 0 0 22px 2px currentColor; transition: color 0.2s; }
+        .pin-label { font-size: 12px; max-width: 120px; padding: 1px 6px; border-radius: 6px; background: rgba(13, 15, 20, 0.8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* translate puts the dot's centre (not the label) on the pin's point */
+        .stage .pin { position: absolute; transform: translate(-50%, -14px); }
+        .pin.dragging { position: fixed; z-index: 10; transform: translate(-50%, -14px); cursor: grabbing; }
         .swatch { height: 70px; border-radius: 10px; border: 1px solid var(--line); background: #000; transition: background 0.15s; box-shadow: 0 0 40px -10px currentColor; }
         .controls { display: grid; gap: 12px; }
         .controls label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
@@ -118,10 +130,17 @@
     <!-- 3. What you see -->
     <section id="vision-section" class="hidden">
         <h2>What you see</h2>
-        <p class="muted" style="margin-top: 0">Pick a screen, choose which lights should follow it (“Follow screen” on each card), and go.</p>
+        <p class="muted" style="margin-top: 0">Choose which lights should follow the screen (“Follow screen” on each card), drag them to where they stand around your screen, and go. A light beside the screen follows the part of the picture nearest to it. Lights left in the tray follow the whole screen.</p>
         <div class="vision">
             <div>
-                <video id="preview" muted playsinline></video>
+                <div class="stage" id="stage">
+                    <div class="screen">
+                        <video id="preview" muted playsinline></video>
+                        <span class="screen-label">Your screen</span>
+                    </div>
+                    <div id="stage-lights"></div>
+                </div>
+                <div class="tray" id="tray"></div>
             </div>
             <div class="controls">
                 <div class="swatch" id="swatch"></div>

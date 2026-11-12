@@ -14,6 +14,7 @@ It has no dependencies: one small Node server, one HTML page and a few hundred l
   - **Vivid** mode picks out the saturated colours, so a red logo on a grey UI still shows as red.
   - **Average** mode uses the true average colour of the screen.
   - Brightness follows the scene, so dark scenes dim the room.
+  - **Light placement.** Drag each light to where it stands around your screen on a small room map. A lamp to the left of the TV follows the left side of the picture, one above it follows the top, and so on. The further a light is from the screen, the wider the area it blends. Lights you don't place follow the whole screen.
   - Sliders for brightness boost, minimum brightness and smoothing.
   - Lights go back to their previous state when you stop, if you want.
 - **Doesn't flood the bridge.** Updates are queued per light and sent round-robin at a safe rate (about 10 commands per second).
@@ -36,9 +37,10 @@ Open **http://localhost:4321** and then:
 1. **Bridge.** Click *Find bridges*, or type the bridge IP (in the Hue app under Settings → Bridges).
 2. **Pair.** Press the round link button on the bridge, then click *Pair*. It keeps retrying for 30 seconds.
 3. **Lights.** Tick *Follow screen* on each light that should react.
-4. **What you see.** Click *Pick screen & start*, choose a screen or window, and watch the room change.
+4. **Placement (optional).** In *What you see*, drag each light from the tray onto the map around the screen, where it stands in your room. Drag a light back to the tray to make it follow the whole screen again.
+5. **What you see.** Click *Pick screen & start*, choose a screen or window, and watch the room change.
 
-The bridge IP and API key are stored in `config.json`, which is git-ignored.
+The bridge IP and API key are stored in `config.json`, which is git-ignored. Which lights follow the screen and where they are placed is saved in your browser's local storage.
 
 ## Configuration
 
@@ -58,15 +60,16 @@ The server only listens on `127.0.0.1`, so it is never exposed to your network.
 ```
  Screen ──getDisplayMedia──▶ Browser                        Node server              Hue bridge
                              ├─ downscale frame to 64×36
-                             ├─ sampleFrame → colour + brightness
+                             ├─ sampleFrame per light → colour + brightness
+                             │   (weighted towards the light's placement)
                              ├─ smoothing, CIE xy conversion
                              └─ POST /api/ambient ─────────▶ keep newest target ──▶ PUT /lights/:id/state
                                 (12 Hz)                       per light, drain        (≤ HUE_RATE/s)
                                                               round-robin
 ```
 
-- **`public/color.js`**: colour maths. sRGB to CIE xy (the colour space Hue uses), xy back to a hex preview colour, and the frame sampler.
-- **`public/app.js`**: the UI, screen capture, the sampling loop and the Web Worker ticker.
+- **`public/color.js`**: colour maths. sRGB to CIE xy (the colour space Hue uses), xy back to a hex preview colour, the frame sampler, and `regionWeights`, which turns a light's position into a per-pixel weighting focused on the nearest part of the screen.
+- **`public/app.js`**: the UI, the placement map, screen capture, the per-light sampling loop and the Web Worker ticker.
 - **`server.mjs`**: serves the page, stores the config, proxies the Hue REST API and runs the rate-limited command queue. Updates that barely change a light are skipped.
 
 ### API
@@ -90,7 +93,7 @@ The server only listens on `127.0.0.1`, so it is never exposed to your network.
 npm test
 ```
 
-The tests use Node's built-in test runner and cover the colour maths and frame sampling.
+The tests use Node's built-in test runner and cover the colour maths, frame sampling and placement weighting.
 
 ## Tips
 
