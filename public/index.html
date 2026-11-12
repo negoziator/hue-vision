@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hue Vision</title>
+    <style>
+        :root {
+            --bg: #0d0f14; --panel: #161a22; --line: #262c38; --text: #e7eaf0; --muted: #8a93a6;
+            --accent: #7c5cff; --ok: #3ecf8e; --warn: #f5a524; --bad: #f2555a; --glow: #7c5cff;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text);
+            background: radial-gradient(1200px 600px at 80% -10%, color-mix(in srgb, var(--glow) 22%, transparent), transparent 60%), var(--bg);
+            transition: background 0.4s;
+            min-height: 100vh;
+        }
+        main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 20px; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+        h1 span { color: var(--muted); font-weight: 400; }
+        h2 { margin: 0 0 12px; font-size: 16px; }
+        section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+        .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .muted { color: var(--muted); }
+        .pill { padding: 3px 10px; border-radius: 99px; font-size: 13px; border: 1px solid var(--line); }
+        .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+        .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+        .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+        button {
+            font: inherit; color: var(--text); background: #222837; border: 1px solid var(--line);
+            padding: 7px 14px; border-radius: 9px; cursor: pointer;
+        }
+        button:hover { border-color: #3a4256; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        input[type=text] { font: inherit; color: var(--text); background: #0f1218; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; }
+        input[type=range] { accent-color: var(--accent); width: 100%; }
+        input[type=color] { width: 36px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; cursor: pointer; }
+        select { font: inherit; color: var(--text); background: #0f1218; border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; }
+        .lights { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+        .light { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; background: #12151c; }
+        .light.off { opacity: 0.6; }
+        .light.unreachable { opacity: 0.4; }
+        .light .top { display: flex; align-items: center; gap: 10px; }
+        .bulb { width: 26px; height: 26px; border-radius: 50%; flex: none; box-shadow: 0 0 18px -2px currentColor; background: currentColor; transition: color 0.2s; }
+        .light.off .bulb { box-shadow: none; color: #333 !important; }
+        .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .switch { position: relative; width: 40px; height: 22px; flex: none; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .switch span { position: absolute; inset: 0; background: #2b3242; border-radius: 99px; cursor: pointer; transition: 0.2s; }
+        .switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+        .switch input:checked + span { background: var(--accent); }
+        .switch input:checked + span::before { transform: translateX(18px); }
+        label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+        .vision { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; }
+        @media (max-width: 760px) { .vision { grid-template-columns: 1fr; } }
+        video { width: 100%; border-radius: 10px; background: #000; aspect-ratio: 16 / 9; object-fit: contain; border: 1px solid var(--line); }
+        .swatch { height: 70px; border-radius: 10px; border: 1px solid var(--line); background: #000; transition: background 0.15s; box-shadow: 0 0 40px -10px currentColor; }
+        .controls { display: grid; gap: 12px; }
+        .controls label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+        .error { color: var(--bad); font-size: 14px; }
+        .hidden { display: none !important; }
+        .discovered { display: grid; gap: 8px; margin: 12px 0; }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <h1>Hue Vision <span>· light what you see</span></h1>
+        <span id="status" class="pill">Connecting…</span>
+    </header>
+
+    <!-- 1. Bridge -->
+    <section id="bridge-section">
+        <h2>Bridge</h2>
+
+        <div id="bridge-choose">
+            <div class="row">
+                <button id="discover" class="primary">Find bridges</button>
+                <span class="muted">or</span>
+                <input id="manual-ip" type="text" placeholder="Bridge IP, e.g. 192.168.1.20">
+                <button id="use-ip">Use IP</button>
+            </div>
+            <div id="discovered" class="discovered"></div>
+        </div>
+
+        <div id="bridge-pair" class="hidden">
+            <p>Found <strong id="pair-name"></strong>. <strong>Press the round link button on the bridge</strong>, then hit Pair (it keeps trying for 30s).</p>
+            <div class="row">
+                <button id="pair" class="primary">Pair</button>
+                <button id="change-bridge">Use another bridge</button>
+            </div>
+        </div>
+
+        <div id="bridge-ok" class="hidden row">
+            <span>Connected to <strong id="ok-name"></strong> <span class="muted" id="ok-ip"></span></span>
+            <button id="unpair">Forget</button>
+        </div>
+
+        <p id="bridge-error" class="error"></p>
+    </section>
+
+    <!-- 2. Lights -->
+    <section id="lights-section" class="hidden">
+        <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
+            <h2 style="margin: 0">Lights</h2>
+            <div class="row">
+                <button id="all-on">All on</button>
+                <button id="all-off">All off</button>
+                <button id="refresh">Refresh</button>
+            </div>
+        </div>
+        <div id="lights" class="lights"></div>
+    </section>
+
+    <!-- 3. What you see -->
+    <section id="vision-section" class="hidden">
+        <h2>What you see</h2>
+        <p class="muted" style="margin-top: 0">Pick a screen, choose which lights should follow it (“Follow screen” on each card), and go.</p>
+        <div class="vision">
+            <div>
+                <video id="preview" muted playsinline></video>
+            </div>
+            <div class="controls">
+                <div class="swatch" id="swatch"></div>
+                <div class="row">
+                    <button id="vision-start" class="primary">Pick screen &amp; start</button>
+                    <button id="vision-stop" class="hidden">Stop</button>
+                </div>
+                <label>Colour mode
+                    <select id="mode">
+                        <option value="vivid">Vivid (most saturated colours)</option>
+                        <option value="average">Average (true screen average)</option>
+                    </select>
+                </label>
+                <label>Brightness <span id="boost-value"></span>
+                    <input id="boost" type="range" min="0.3" max="2.5" step="0.05" value="1.3">
+                </label>
+                <label>Minimum brightness <span id="minbri-value"></span>
+                    <input id="minbri" type="range" min="1" max="120" step="1" value="10">
+                </label>
+                <label>Smoothing <span id="smooth-value"></span>
+                    <input id="smooth" type="range" min="0" max="0.95" step="0.05" value="0.6">
+                </label>
+                <label class="check"><input id="restore" type="checkbox" checked> Restore lights when stopped</label>
+                <p id="vision-error" class="error"></p>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

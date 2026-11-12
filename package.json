@@ -1,0 +1,14 @@
+{
+  "name": "hue-vision",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Control Philips Hue lights and make them follow your screen (\"What you see\").",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
