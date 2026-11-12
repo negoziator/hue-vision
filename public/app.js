@@ -3,9 +3,14 @@ import { rgbToXy, hexToRgb, rgbToHex, xyToHex, sampleFrame, regionWeights } from
 const $ = (id) => document.getElementById(id);
 const FOLLOW_KEY = 'hue-vision:follow';
 const PLACEMENT_KEY = 'hue-vision:placement';
+const ROOM_KEY = 'hue-vision:room';
 
 const state = {
     lights: [],
+    /** Rooms and zones from the bridge: { id, name, type, lights: [light ids] }. */
+    rooms: [],
+    /** Selected room/zone id, or '' for every light on the bridge. */
+    room: loadJson(ROOM_KEY, ''),
     following: new Set(loadJson(FOLLOW_KEY, [])),
     /** light id -> { x, y } relative to the screen (0..1 = on the screen, outside = beside it). */
     placement: loadJson(PLACEMENT_KEY, {}),
@@ -147,7 +152,13 @@ $('unpair').onclick = async () => {
 
 async function loadLights() {
     try {
-        state.lights = await api('GET', '/api/lights');
+        const [lights, rooms] = await Promise.all([
+            api('GET', '/api/lights'),
+            api('GET', '/api/rooms').catch(() => state.rooms),
+        ]);
+        state.lights = lights;
+        state.rooms = rooms;
+        renderRooms();
         renderLights();
     } catch (error) {
         if (error.status === 401) {
@@ -155,6 +166,46 @@ async function loadLights() {
         }
         $('bridge-error').textContent = error.message;
     }
+}
+
+/* ---------------- Rooms ----------------
+ * Picking a room limits everything to its lights: the cards, All on/off and
+ * "What you see". Lights elsewhere in the house are never touched.
+ */
+
+function currentRoom() {
+    return state.rooms.find((r) => r.id === state.room) ?? null;
+}
+
+/** The lights in the selected room, or every light when no room is selected. */
+function roomLights() {
+    const room = currentRoom();
+    return room ? state.lights.filter((l) => room.lights.includes(l.id)) : state.lights;
+}
+
+function renderRooms() {
+    const select = $('room');
+    select.innerHTML = '';
+    select.append(new Option('All lights', ''));
+    for (const room of state.rooms) {
+        const label = `${room.name}${room.type === 'Zone' ? ' (zone)' : ''} · ${room.lights.length}`;
+        select.append(new Option(label, room.id));
+    }
+    // A saved room that no longer exists (or belongs to another bridge) falls back to all lights.
+    select.value = currentRoom() ? state.room : '';
+    select.disabled = !!state.vision;
+}
+
+$('room').onchange = () => {
+    state.room = $('room').value;
+    saveJson(ROOM_KEY, state.room);
+    renderLights();
+};
+
+/** Switch the selected room (or every light) on or off in one bridge command. */
+function setRoom(body) {
+    const room = currentRoom();
+    return room ? api('PUT', `/api/groups/${room.id}`, body) : api('PUT', '/api/all', body);
 }
 
 function lightHex(light) {
@@ -168,7 +219,12 @@ function renderLights() {
     const container = $('lights');
     container.innerHTML = '';
 
-    for (const light of state.lights) {
+    const lights = roomLights();
+    if (lights.length === 0) {
+        container.innerHTML = '<span class="muted">No lights in this room.</span>';
+    }
+
+    for (const light of lights) {
         const card = document.createElement('div');
         card.className = `light ${light.on ? '' : 'off'} ${light.reachable ? '' : 'unreachable'}`;
         card.innerHTML = `
@@ -247,7 +303,7 @@ function renderPlacement() {
     tray.innerHTML = '';
     state.dots.clear();
 
-    const followed = state.lights.filter((l) => state.following.has(l.id));
+    const followed = roomLights().filter((l) => state.following.has(l.id));
     if (followed.length === 0) {
         tray.innerHTML = '<span class="muted">Tick “Follow screen” on a light to place it here.</span>';
     }
@@ -342,8 +398,8 @@ async function setLight(id, body) {
     }
 }
 
-$('all-on').onclick = async () => { await api('PUT', '/api/all', { on: true }); await loadLights(); };
-$('all-off').onclick = async () => { await stopVision(); await api('PUT', '/api/all', { on: false }); await loadLights(); };
+$('all-on').onclick = async () => { await setRoom({ on: true }); await loadLights(); };
+$('all-off').onclick = async () => { await stopVision(); await setRoom({ on: false }); await loadLights(); };
 $('refresh').onclick = loadLights;
 
 /* ---------------- What you see ---------------- */
@@ -377,10 +433,11 @@ for (const [input, label, format] of [
 
 async function startVision() {
     $('vision-error').textContent = '';
-    const targets = state.lights.filter((l) => state.following.has(l.id) && l.reachable);
+    const targets = roomLights().filter((l) => state.following.has(l.id) && l.reachable);
 
     if (targets.length === 0) {
-        $('vision-error').textContent = 'Tick “Follow screen” on at least one reachable light first.';
+        const where = currentRoom() ? ` in ${currentRoom().name}` : '';
+        $('vision-error').textContent = `Tick “Follow screen” on at least one reachable light${where} first.`;
         return;
     }
 
@@ -466,10 +523,12 @@ async function startVision() {
     stream.getVideoTracks()[0].addEventListener('ended', stopVision);
     state.vision = { stream, ticker, snapshot };
     $('stage').classList.add('live');
+    $('room').disabled = true;
 
     $('vision-start').classList.add('hidden');
     $('vision-stop').classList.remove('hidden');
-    setStatus(`What you see · ${targets.length} light${targets.length > 1 ? 's' : ''}`, 'ok');
+    const where = currentRoom() ? ` in ${currentRoom().name}` : '';
+    setStatus(`What you see · ${targets.length} light${targets.length > 1 ? 's' : ''}${where}`, 'ok');
 }
 
 async function stopVision() {
@@ -483,6 +542,7 @@ async function stopVision() {
     vision.stream.getTracks().forEach((t) => t.stop());
     $('preview').srcObject = null;
     $('stage').classList.remove('live');
+    $('room').disabled = false;
     state.liveHex.clear();
     $('vision-start').classList.remove('hidden');
     $('vision-stop').classList.add('hidden');

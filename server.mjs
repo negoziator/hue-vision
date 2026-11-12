@@ -173,6 +173,15 @@ const routes = {
         }));
     },
 
+    /** Rooms and zones as set up in the Hue app, so the UI can limit itself to one of them. */
+    'GET /api/rooms': async () => {
+        const groups = await authed('GET', '/groups');
+        return Object.entries(groups)
+            .filter(([, group]) => group.type === 'Room' || group.type === 'Zone')
+            .map(([id, group]) => ({ id, name: group.name, type: group.type, lights: group.lights ?? [] }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    },
+
     'PUT /api/lights/:id': async (body, { id }) => {
         pending.delete(id);
         return authed('PUT', `/lights/${id}/state`, pick(body, LIGHT_STATE_KEYS));
@@ -181,6 +190,14 @@ const routes = {
     'PUT /api/all': async (body) => {
         pending.clear();
         return authed('PUT', '/groups/0/action', pick(body, LIGHT_STATE_KEYS));
+    },
+
+    'PUT /api/groups/:id': async (body, { id }) => {
+        if (!/^\d+$/.test(id)) {
+            throw new HttpError(422, 'Invalid group id');
+        }
+        pending.clear();
+        return authed('PUT', `/groups/${id}/action`, pick(body, LIGHT_STATE_KEYS));
     },
 
     'POST /api/ambient': async ({ targets = {}, transitiontime = 2 }) => {

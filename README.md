@@ -9,6 +9,7 @@ It has no dependencies: one small Node server, one HTML page and a few hundred l
 ## Features
 
 - **Bridge discovery and pairing.** Finds Hue bridges on your network and pairs with one link-button press.
+- **Choose a room.** Pick one of the rooms or zones from the Hue app and Hue Vision only shows and controls the lights in it. *All on*, *All off* and *What you see* never touch lights anywhere else in the house.
 - **Light control.** On/off, brightness and colour per light, plus *All on* and *All off*.
 - **What you see.** Lights follow the screen you share:
   - **Vivid** mode picks out the saturated colours, so a red logo on a grey UI still shows as red.
@@ -36,11 +37,12 @@ Open **http://localhost:4321** and then:
 
 1. **Bridge.** Click *Find bridges*, or type the bridge IP (in the Hue app under Settings → Bridges).
 2. **Pair.** Press the round link button on the bridge, then click *Pair*. It keeps retrying for 30 seconds.
-3. **Lights.** Tick *Follow screen* on each light that should react.
-4. **Placement (optional).** In *What you see*, drag each light from the tray onto the map around the screen, where it stands in your room. Drag a light back to the tray to make it follow the whole screen again.
-5. **What you see.** Click *Pick screen & start*, choose a screen or window, and watch the room change.
+3. **Room (optional).** Pick a room next to the *Lights* heading, e.g. your office, so nothing elsewhere in the house reacts.
+4. **Lights.** Tick *Follow screen* on each light that should react.
+5. **Placement (optional).** In *What you see*, drag each light from the tray onto the map around the screen, where it stands in your room. Drag a light back to the tray to make it follow the whole screen again.
+6. **What you see.** Click *Pick screen & start*, choose a screen or window, and watch the room change.
 
-The bridge IP and API key are stored in `config.json`, which is git-ignored. Which lights follow the screen and where they are placed is saved in your browser's local storage.
+The bridge IP and API key are stored in `config.json`, which is git-ignored. The selected room, which lights follow the screen and where they are placed are saved in your browser's local storage.
 
 ## Configuration
 
@@ -82,7 +84,9 @@ The server only listens on `127.0.0.1`, so it is never exposed to your network.
 | `POST /api/pair`         | Pair (press the link button first)          |
 | `POST /api/unpair`       | Forget the API key                          |
 | `GET  /api/lights`       | List lights and their state                 |
+| `GET  /api/rooms`        | List rooms and zones with their light ids   |
 | `PUT  /api/lights/:id`   | Set a light's state                         |
+| `PUT  /api/groups/:id`   | Set the state of every light in a room/zone |
 | `PUT  /api/all`          | Set the state of all lights (group 0)       |
 | `POST /api/ambient`      | Queue screen-follow targets                 |
 | `POST /api/ambient/stop` | Clear the queue                             |
